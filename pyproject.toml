@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "emaopt"
+dynamic = ["version"]
+description = "EMA-accelerated statistical optimization: a reusable research library"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Peter Baylies" }]
+keywords = [
+    "clustering",
+    "k-means",
+    "e-means",
+    "gaussian-mixture",
+    "streaming",
+    "ema",
+    "online-learning",
+    "sufficient-statistics",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+# numpy is the only runtime dependency.  The optional compiled kernels are built
+# from the packaged C source.
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+# Optional runtime surfaces.  The default install is NumPy only and imports no
+# part of these; each raises a plain ImportError when reached without the extra.
+gpu = ["torch>=2.0"]
+plots = ["matplotlib>=3.7"]
+# Reference implementations the parity tests compare against.  Tests that need
+# one skip (pytest.importorskip) when it is absent.
+reference = ["scikit-learn>=1.3"]
+faiss = ["faiss-cpu>=1.8"]
+# Optional JIT backend for the two row-shaped host kernels.  Opt-in at run
+# time as well (EMAOPT_NUMBA=1): a first-call compile is not something a fit
+# should discover on its own.
+numba = ["numba>=0.58"]
+dev = ["pytest>=7.0", "scikit-learn>=1.3"]
+
+[tool.setuptools.packages.find]
+include = ["emaopt*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "emaopt.__version__" }
+
+[tool.setuptools.package-data]
+# Only *source* ships: the .c/.cu that the user's own compiler turns into an
+# artifact via `python -m emaopt.kernels.build` (default --backend c, whose only
+# requirement is a C compiler).  Artifacts are per-machine -- -march=native; a
+# .so built elsewhere raises SIGILL inside a fit (see emaopt/hostkernels.py) --
+# and the build stamps describe one machine's toolchain, so neither belongs in
+# a wheel.
+"emaopt.kernels" = ["*.c", "*.cu"]
+
+[tool.setuptools.exclude-package-data]
+# Belt and braces: a developer who built in-tree has libegmm_diag*.so and
+# *.build.json sitting beside the sources, and neither may ever ship.
+"emaopt.kernels" = ["*.so", "*.build.json", "generated/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error::RuntimeWarning"]

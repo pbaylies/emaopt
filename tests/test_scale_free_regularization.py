@@ -1,0 +1,104 @@
+"""The absolute regularisation constants outside the covariance floor.
+
+The floor work asked one question of every constant in the library: does it mean
+the same thing when the input's units change?  Two answers here, both measured.
+
+* NMF's ridge acts on a Gram matrix, so it is not formally scale-free -- the
+  Gram shrinks with the data while the ridge does not.  Measured at the scales
+  the library is used at it is inert (the basis moves by less than the bound
+  below at variance 1e-6); what *was* wrong is that it was applied twice, once
+  by the caller and once by the solve.  These tests pin the single application.
+* ICA's whitening clip is an absolute eigenvalue epsilon.  Above it the
+  whitening is exactly scale-equivariant and ``rcond`` is invariant; below it
+  the ``clipped`` count records the crossover, so the dependence is visible
+  rather than silent.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from emaopt.algorithms import NMF
+from emaopt.algorithms.ica import _eigh_whitening
+from emaopt.algorithms.nmf import NMFStat, nmf_solve_right
+from emaopt.benchmarks import datasets
+
+
+def test_nmf_solve_right_applies_the_ridge_once():
+    rng = np.random.default_rng(0)
+    b = np.diag([1.0, 2.0])
+    a = rng.normal(size=(5, 2))
+    ridge = 0.5                      # large, so a second application is obvious
+    one = np.linalg.solve(b + ridge * np.eye(2), a.T).T
+    two = np.linalg.solve(b + 2.0 * ridge * np.eye(2), a.T).T
+
+    np.testing.assert_allclose(nmf_solve_right(a, b, ridge), one, rtol=1e-12)
+    assert not np.allclose(one, two)
+
+
+def test_nmf_decode_uses_one_ridge():
+    ds = datasets.nonneg_low_rank(n=200, d=5, rank=2, seed=1)
+    model = NMF(2, ridge=0.1, seed=0)
+    state = model.initialize(ds.x)
+    a = np.asarray(state["A"], dtype=np.float64)
+    b = np.asarray(state["B"], dtype=np.float64)
+    want = np.maximum(np.linalg.solve(b + 0.1 * np.eye(2), a.T).T, 0.0)
+
+    np.testing.assert_allclose(model.decode(state)["basis"], want, rtol=1e-10,
+                               atol=1e-12)
+
+
+def test_nmf_stat_acts_with_one_ridge():
+    a = np.array([[1.0, 2.0], [3.0, 1.0], [0.5, 4.0]])
+    b = np.array([[5.0, 1.0], [1.0, 4.0]])
+    stat = NMFStat(2, ridge=0.25, seed=0)
+    stat.prepare(d=3)
+    stat.values["A"] = a
+    stat.values["B"] = b
+    stat.act()
+    want = np.maximum(np.linalg.solve(b + 0.25 * np.eye(2), a.T).T, 0.0)
+
+    np.testing.assert_allclose(stat.params["basis"], want, rtol=1e-12)
+
+
+def test_the_nmf_ridge_is_inert_at_variance_one_e_minus_6():
+    ds = datasets.nonneg_low_rank(n=1000, d=8, rank=2, seed=3)
+    x = ds.x * 1e-3                  # variance ~1e-6, the LAION block's scale
+
+    def basis(ridge):
+        model = NMF(2, ridge=ridge, seed=0)
+        return np.asarray(model.decode(model.initialize(x))["basis"])
+
+    with_ridge, without = basis(1e-8), basis(0.0)
+    gap = np.abs(with_ridge - without).max() / np.abs(without).max()
+    assert gap < 1e-4, f"the absolute ridge moved the basis by {gap:.2e}"
+
+
+def test_ica_whitening_is_scale_free_above_the_clip():
+    rng = np.random.default_rng(3)
+    x = rng.normal(size=(400, 4)) @ np.diag([1.0, 2.0, 0.5, 3.0])
+    cov = x.T @ x / len(x)
+
+    w, diag = _eigh_whitening(cov)
+    # every eigenvalue stays above the 1e-12 clip (cov's smallest is 0.13)
+    scale = 1e-3
+    w_scaled, diag_scaled = _eigh_whitening(cov * scale**2)
+
+    # one power of the scale, not two: W(s C) = W(C) / s
+    np.testing.assert_allclose(w_scaled * scale, w, rtol=1e-10, atol=1e-14)
+    assert diag_scaled["rcond"] == pytest.approx(diag["rcond"], rel=1e-9)
+    assert diag["clipped"] == diag_scaled["clipped"] == 0
+
+
+def test_the_ica_clip_records_where_scale_equivariance_stops():
+    rng = np.random.default_rng(4)
+    x = rng.normal(size=(400, 4)) @ np.diag([1.0, 2.0, 0.5, 3.0])
+    cov = x.T @ x / len(x)
+
+    # every eigenvalue now sits below the absolute 1e-12 clip, so the whitening
+    # can no longer be equivariant -- and the diagnostic says so instead of
+    # pretending: all four dimensions count as clipped and rcond reads 1.0
+    _w, diag = _eigh_whitening(cov * 1e-14)
+    assert diag["clipped"] == 4
+    assert diag["rcond"] == pytest.approx(1.0)

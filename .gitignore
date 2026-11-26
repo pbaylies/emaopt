@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+plot_*.png
+
+.agent/cache/
+
+resume.sh
+.worktrees/
+
+# compiled host kernels are built per machine (scripts/gen_hostkernels.py)
+emaopt/kernels/*.so
+# their build stamps describe one machine's toolchain/arch
+emaopt/kernels/*.build.json
+
+# generated wrappers are build output, not source
+emaopt/kernels/generated/
+# maintainer-side kernel builds: a stamp describes one machine's toolchain
+tools/pydral/*.build.json
